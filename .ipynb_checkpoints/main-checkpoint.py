@@ -1,0 +1,202 @@
+import argparse
+import pickle
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
+from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence
+from tqdm import tqdm
+
+
+def load_pkl(path: Path):
+    with open(path, "rb") as f:
+        return pickle.load(f)
+
+
+def compute_mean_std(list_of_arrays):
+    # Incremental mean/std over all timesteps of all sequences
+    # list_of_arrays: list[np.ndarray] each shape (T, F)
+    count = 0
+    sum_ = None
+    sumsq = None
+
+    for a in list_of_arrays:
+        a = np.asarray(a, dtype=np.float64)
+        if a.ndim != 2:
+            raise ValueError(f"Expected (T,F), got shape {a.shape}")
+        if sum_ is None:
+            sum_ = np.zeros(a.shape[1], dtype=np.float64)
+            sumsq = np.zeros(a.shape[1], dtype=np.float64)
+
+        sum_ += a.sum(axis=0)
+        sumsq += (a * a).sum(axis=0)
+        count += a.shape[0]
+
+    mean = sum_ / max(count, 1)
+    var = sumsq / max(count, 1) - mean * mean
+    var = np.maximum(var, 1e-12)
+    std = np.sqrt(var)
+    return mean.astype(np.float32), std.astype(np.float32)
+
+
+class WriterIMUDataset(Dataset):
+    def __init__(self, X, ids, id_to_idx=None, mean=None, std=None):
+        self.X = X
+        self.ids = [str(i) for i in ids]
+        assert len(self.X) == len(self.ids), "X and ids length mismatch"
+
+        uniq = sorted(set(self.ids))
+        self.id_to_idx = {pid: k for k, pid in enumerate(uniq)} if id_to_idx is None else id_to_idx
+
+        self.mean = mean
+        self.std = std
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, i):
+        x = np.asarray(self.X[i], dtype=np.float32)
+        if x.ndim != 2:
+            raise ValueError(f"Expected (T,F), got shape {x.shape}")
+
+        if self.mean is not None and self.std is not None:
+            x = (x - self.mean) / self.std
+
+        x = torch.from_numpy(x)  # (T,F)
+        y = torch.tensor(self.id_to_idx[self.ids[i]], dtype=torch.long)
+        return x, y
+
+
+def collate(batch):
+    xs, ys = zip(*batch)
+    lengths = torch.tensor([x.shape[0] for x in xs], dtype=torch.long)
+    xs_pad = pad_sequence(xs, batch_first=True)  # (B,Tmax,F)
+    ys = torch.stack(ys)
+    return xs_pad, lengths, ys
+
+
+class BiLSTMWriter(nn.Module):
+    def __init__(self, feat_dim, hidden=128, num_layers=2, num_writers=10):
+        super().__init__()
+        self.lstm = nn.LSTM(
+            input_size=feat_dim,
+            hidden_size=hidden,
+            num_layers=num_layers,
+            batch_first=True,
+            bidirectional=True,
+            dropout=0.2 if num_layers > 1 else 0.0,
+        )
+        self.head = nn.Sequential(
+            nn.LayerNorm(hidden * 2),
+            nn.Dropout(0.3),
+            nn.Linear(hidden * 2, num_writers),
+        )
+
+    def forward(self, x, lengths):
+        packed = pack_padded_sequence(x, lengths.cpu(), batch_first=True, enforce_sorted=False)
+        _, (h, _) = self.lstm(packed)
+        # last layer, both directions
+        h_last = torch.cat([h[-2], h[-1]], dim=1)  # (B, 2*hidden)
+        return self.head(h_last)
+
+
+@torch.no_grad()
+def evaluate(model, loader, device):
+    model.eval()
+    correct = 0
+    total = 0
+    loss_sum = 0.0
+    ce = nn.CrossEntropyLoss()
+    for x, lengths, y in loader:
+        x, lengths, y = x.to(device), lengths.to(device), y.to(device)
+        logits = model(x, lengths)
+        loss = ce(logits, y)
+        loss_sum += float(loss.item()) * y.size(0)
+        pred = logits.argmax(dim=1)
+        correct += int((pred == y).sum().item())
+        total += y.size(0)
+    return loss_sum / max(total, 1), correct / max(total, 1)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--data_root", type=str, default="OnHW-equations_dep")
+    ap.add_argument("--fold", type=int, default=0)
+    ap.add_argument("--epochs", type=int, default=15)
+    ap.add_argument("--batch", type=int, default=64)
+    ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--hidden", type=int, default=128)
+    ap.add_argument("--layers", type=int, default=2)
+    args = ap.parse_args()
+
+    fold_dir = Path(args.data_root) / str(args.fold)
+    xtr = load_pkl(fold_dir / "all_x_dat_train_imu_e.pkl")
+    ytr = load_pkl(fold_dir / "train_ids_e.pkl")
+    xva = load_pkl(fold_dir / "all_x_dat_val_imu_e.pkl")
+    yva = load_pkl(fold_dir / "val_ids_e.pkl")
+
+    # Normalize using training statistics
+    mean, std = compute_mean_std(xtr)
+
+    # Build mapping using train writers; assume val writers are subset (dep setting)
+    train_ds = WriterIMUDataset(xtr, ytr, mean=mean, std=std)
+    val_ds = WriterIMUDataset(xva, yva, id_to_idx=train_ds.id_to_idx, mean=mean, std=std)
+
+    num_writers = len(train_ds.id_to_idx)
+    feat_dim = int(np.asarray(xtr[0]).shape[1])
+
+    train_loader = DataLoader(train_ds, batch_size=args.batch, shuffle=True, collate_fn=collate)
+    val_loader = DataLoader(val_ds, batch_size=args.batch, shuffle=False, collate_fn=collate)
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = BiLSTMWriter(feat_dim=feat_dim, hidden=args.hidden, num_layers=args.layers, num_writers=num_writers).to(device)
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    ce = nn.CrossEntropyLoss()
+
+    best_acc = -1.0
+    out_path = Path(f"writerid_bilstm_fold{args.fold}.pt")
+
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        running = 0.0
+        seen = 0
+
+        for x, lengths, y in tqdm(train_loader, desc=f"Epoch {epoch}/{args.epochs}"):
+            x, lengths, y = x.to(device), lengths.to(device), y.to(device)
+            opt.zero_grad(set_to_none=True)
+            logits = model(x, lengths)
+            loss = ce(logits, y)
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), 5.0)
+            opt.step()
+
+            running += float(loss.item()) * y.size(0)
+            seen += y.size(0)
+
+        tr_loss = running / max(seen, 1)
+        va_loss, va_acc = evaluate(model, val_loader, device)
+
+        print(f"Epoch {epoch}: train_loss={tr_loss:.4f}  val_loss={va_loss:.4f}  val_acc={va_acc*100:.2f}%")
+
+        if va_acc > best_acc:
+            best_acc = va_acc
+            torch.save(
+                {
+                    "model_state": model.state_dict(),
+                    "id_to_idx": train_ds.id_to_idx,
+                    "mean": mean,
+                    "std": std,
+                    "feat_dim": feat_dim,
+                    "num_writers": num_writers,
+                },
+                out_path,
+            )
+            print(f"  Saved best -> {out_path} (acc={best_acc*100:.2f}%)")
+
+    print("Done. Best val acc:", best_acc)
+
+
+if __name__ == "__main__":
+    main()
