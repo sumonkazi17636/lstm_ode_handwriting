@@ -77,4 +77,4 @@ Checkpoint dictionaries saved by the scripts include keys such as:
 
 ## predictions demo
 ![Predictions](assets/predictions.png)
-![Predictions for sample writers — top-5](assets/predictions.png)
+
