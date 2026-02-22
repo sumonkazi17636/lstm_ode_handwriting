@@ -73,10 +73,10 @@ class ODERNNWriter(nn.Module):
     
             hs.append(h)
     
-        # hs: list of T tensors (B,H) -> (B,T,H)
+        
         H = torch.stack(hs, dim=1)
     
-        # Pool last K valid steps
+        
         K = 10
         pooled = []
         for i in range(B):

@@ -18,7 +18,7 @@ def load_pkl(path: Path):
 
 
 def compute_mean_std(list_of_arrays):
-    # Incremental mean/std over all timesteps of all sequences
+    
     count = 0
     sum_ = None
     sumsq = None
@@ -64,11 +64,11 @@ class WriterIMUDataset(Dataset):
         if x.ndim != 2:
             raise ValueError(f"Expected (T,F), got shape {x.shape}")
 
-        # ✅ Speed-up: Downsample time dimension
+        
         if self.downsample > 1:
             x = x[:: self.downsample]
 
-        # Normalize using training mean/std
+        
         if self.mean is not None and self.std is not None:
             x = (x - self.mean) / self.std
 
@@ -124,10 +124,10 @@ def main():
     xva = load_pkl(fold_dir / "all_x_dat_val_imu_e.pkl")
     yva = load_pkl(fold_dir / "val_ids_e.pkl")
 
-    # Normalize using TRAIN statistics
+    
     mean, std = compute_mean_std(xtr)
 
-    # Build mapping using train writers (writer-dependent setting)
+    
     train_ds = WriterIMUDataset(xtr, ytr, mean=mean, std=std, downsample=args.downsample)
     val_ds = WriterIMUDataset(
         xva, yva, id_to_idx=train_ds.id_to_idx, mean=mean, std=std, downsample=args.downsample
@@ -155,10 +155,10 @@ def main():
 
     sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
         opt,
-        mode="max",      # we want to maximize validation accuracy
-        factor=0.5,      # reduce LR by half
-        patience=3,      # wait 3 epochs without improvement
-        verbose=True
+        mode="max",
+        factor=0.5,
+        patience=3,
+        verbose=True,
     )
 
     best_acc = -1.0
@@ -193,7 +193,7 @@ def main():
         current_lr = opt.param_groups[0]["lr"]
         print(f"  Current LR: {current_lr:.6f}")
 
-        # ✅ Save a checkpoint AFTER EVERY EPOCH
+        
         ckpt_path = Path(f"writerid_odernn_new_fold{args.fold}_epoch{epoch}.pt")
         torch.save(
             {
@@ -215,7 +215,7 @@ def main():
         )
         print(f"  Saved checkpoint -> {ckpt_path}")
 
-        # ✅ Track which epoch is best
+        
         if va_acc > best_acc:
             best_acc = va_acc
             best_epoch = epoch

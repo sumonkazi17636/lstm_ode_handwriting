@@ -8,23 +8,21 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence
 
-# ODE-RNN model (your file)
+
 from neural_ode_model import ODERNNWriter
 
 
-# -------------------------
-# Utilities
-# -------------------------
+
 def load_pkl(p: Path):
     with open(p, "rb") as f:
         return pickle.load(f)
 
 
 def find_fold_files(data_root: Path, fold: int):
-    """Handles both equations (_e.pkl) and words500 (no _e.pkl)."""
+    
     fold_dir = data_root / str(fold)
 
-    # Prefer _e.pkl if exists (equations_dep)
+    
     x_val_e = fold_dir / "all_x_dat_val_imu_e.pkl"
     y_val_e = fold_dir / "val_ids_e.pkl"
 
@@ -43,7 +41,7 @@ def find_fold_files(data_root: Path, fold: int):
 
 
 def infer_fold_from_name(name: str) -> int | None:
-    # tries to parse "...fold0..." / "...fold1..."
+    
     for f in [0, 1, 2, 3, 4, 5]:
         if f"fold{f}" in name:
             return f
@@ -51,23 +49,21 @@ def infer_fold_from_name(name: str) -> int | None:
 
 
 def infer_dataset_from_name(name: str) -> str | None:
-    # tries to parse dataset from filename
+   
     if "words500" in name.lower():
         return "OnHW-words500_dep"
     if "equations" in name.lower():
         return "OnHW-equations_dep"
-    # your old ODE checkpoints: writerid_odernn_new_fold0_epochX.pt likely equations
+    
     if "odernn_new" in name.lower():
         return "OnHW-equations_dep"
-    # your old bilstm fold0 best has no dataset tag -> likely equations
+    
     if "writerid_bilstm_fold" in name.lower():
         return "OnHW-equations_dep"
     return None
 
 
-# -------------------------
-# Dataset + Collate
-# -------------------------
+
 class SeqDS(Dataset):
     def __init__(self, X, y_ids, mean, std, id_to_idx, downsample: int):
         self.X = X
@@ -82,20 +78,20 @@ class SeqDS(Dataset):
     def __getitem__(self, i):
         x = np.asarray(self.X[i], dtype=np.float32)
 
-        # filter/repair empty sequences
+        
         if x.ndim != 2:
             raise ValueError(f"Expected 2D array (T,F), got {x.shape}")
         if x.shape[0] <= 0:
-            # repair to 1 timestep of zeros
+            
             x = np.zeros((1, x.shape[1]), dtype=np.float32)
 
-        # downsample
+        
         if self.downsample > 1:
             x = x[:: self.downsample]
             if x.shape[0] <= 0:
                 x = np.zeros((1, x.shape[1]), dtype=np.float32)
 
-        # normalize
+        
         x = (x - self.mean) / self.std
 
         return torch.from_numpy(x), torch.tensor(self.y[i], dtype=torch.long)
@@ -109,9 +105,6 @@ def collate(batch):
     return xs_pad, lengths, ys
 
 
-# -------------------------
-# BiLSTM model (same as your training)
-# -------------------------
 class BiLSTMWriter(nn.Module):
     def __init__(self, feat_dim, hidden=128, num_layers=2, num_writers=10):
         super().__init__()
@@ -136,15 +129,13 @@ class BiLSTMWriter(nn.Module):
         return self.head(h_last)
 
 
-# -------------------------
-# Evaluation
-# -------------------------
+
 @torch.no_grad()
 def eval_checkpoint(ckpt_path: Path, data_root_base: Path, batch: int = 64, device: str = "cuda"):
-    # IMPORTANT: PyTorch 2.6 default weights_only=True -> we force False
+    
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
 
-    # infer model type
+    
     model_type = ckpt.get("model_type", "").lower()
     name = ckpt_path.name.lower()
 
@@ -152,10 +143,9 @@ def eval_checkpoint(ckpt_path: Path, data_root_base: Path, batch: int = 64, devi
     is_lstm = ("bilstm" in model_type) or ("bilstm" in name) or ("lstm" in model_type)
 
     if not (is_ode or is_lstm):
-        # fallback: infer from keys
         is_ode = "ode_method" in ckpt or "ode_step_size" in ckpt
 
-    # dataset + fold
+    
     fold = ckpt.get("fold", None)
     if fold is None:
         fold = infer_fold_from_name(ckpt_path.name)
@@ -170,12 +160,12 @@ def eval_checkpoint(ckpt_path: Path, data_root_base: Path, batch: int = 64, devi
 
     data_root = data_root_base / ds_name
 
-    # load val files
+    
     x_val_path, y_val_path = find_fold_files(data_root, fold)
     Xv = load_pkl(x_val_path)
     yv = load_pkl(y_val_path)
 
-    # ckpt stats / mapping
+    
     id_to_idx = ckpt["id_to_idx"]
     mean = ckpt["mean"]
     std = ckpt["std"]
@@ -186,7 +176,7 @@ def eval_checkpoint(ckpt_path: Path, data_root_base: Path, batch: int = 64, devi
     ds = SeqDS(Xv, yv, mean, std, id_to_idx, downsample=downsample)
     dl = DataLoader(ds, batch_size=batch, shuffle=False, collate_fn=collate)
 
-    # build model
+    
     if is_ode:
         hidden_dim = int(ckpt.get("hidden_dim", 128))
         ode_method = ckpt.get("ode_method", "rk4")
@@ -269,7 +259,7 @@ def main():
         except Exception as e:
             print(f"⚠️ Skipped {ckpt_path.name}: {e}")
 
-    # Print summary table
+    
     print("\n==================== EVALUATION SUMMARY ====================")
     print(f"{'MODEL':<8}  {'DATASET':<18}  {'FOLD':<4}  {'ACC(%)':<7}  {'CKPT'}")
     print("-" * 70)

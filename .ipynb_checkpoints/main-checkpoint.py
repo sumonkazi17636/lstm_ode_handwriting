@@ -16,8 +16,7 @@ def load_pkl(path: Path):
 
 
 def compute_mean_std(list_of_arrays):
-    # Incremental mean/std over all timesteps of all sequences
-    # list_of_arrays: list[np.ndarray] each shape (T, F)
+    
     count = 0
     sum_ = None
     sumsq = None
@@ -97,7 +96,7 @@ class BiLSTMWriter(nn.Module):
     def forward(self, x, lengths):
         packed = pack_padded_sequence(x, lengths.cpu(), batch_first=True, enforce_sorted=False)
         _, (h, _) = self.lstm(packed)
-        # last layer, both directions
+        
         h_last = torch.cat([h[-2], h[-1]], dim=1)  # (B, 2*hidden)
         return self.head(h_last)
 
@@ -137,10 +136,10 @@ def main():
     xva = load_pkl(fold_dir / "all_x_dat_val_imu_e.pkl")
     yva = load_pkl(fold_dir / "val_ids_e.pkl")
 
-    # Normalize using training statistics
+    
     mean, std = compute_mean_std(xtr)
 
-    # Build mapping using train writers; assume val writers are subset (dep setting)
+    
     train_ds = WriterIMUDataset(xtr, ytr, mean=mean, std=std)
     val_ds = WriterIMUDataset(xva, yva, id_to_idx=train_ds.id_to_idx, mean=mean, std=std)
 

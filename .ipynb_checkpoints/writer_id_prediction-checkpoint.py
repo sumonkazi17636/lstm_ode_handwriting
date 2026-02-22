@@ -1,10 +1,4 @@
-# predict_single_writer_ode.py
-# Single-sample (single writer) prediction for ODE-RNN, same style as your BiLSTM script.
-# - ckpt is looked up inside model_saved/ by default
-# - loads correct split files for equations (_e.pkl) or words500 (no _e.pkl)
-# - uses ODE settings from checkpoint (ode_method, ode_step_size) + downsample from checkpoint
-# - repairs empty sequences
-
+    
 import argparse
 import pickle
 from pathlib import Path
@@ -32,14 +26,10 @@ def pick_file(fold_dir: Path, must_contain: list[str]) -> Path:
 
 
 def load_split_files(data_root: str, fold: int, split: str):
-    """
-    Dataset-agnostic:
-      - prefers *_e.pkl (equations_dep)
-      - falls back to non-_e.pkl (words500_dep)
-    """
+        
     fold_dir = Path(data_root) / str(fold)
 
-    # Prefer _e
+    
     try:
         x_path = pick_file(fold_dir, ["all_x_dat", split, "imu", "_e"])
         y_path = pick_file(fold_dir, [f"{split}_ids", "_e"])
@@ -47,7 +37,7 @@ def load_split_files(data_root: str, fold: int, split: str):
     except FileNotFoundError:
         pass
 
-    # Fallback
+    
     x_path = pick_file(fold_dir, ["all_x_dat", split, "imu"])
     y_path = pick_file(fold_dir, [f"{split}_ids"])
     return x_path, y_path
@@ -65,14 +55,14 @@ def main():
     ap.add_argument("--device", default="cuda")
     args = ap.parse_args()
 
-    # Resolve ckpt path (prefer model_saved/)
+    
     ckpt_path = Path(args.ckpt)
     if not ckpt_path.exists():
         ckpt_path = Path(args.models_dir) / args.ckpt
     if not ckpt_path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {args.ckpt} (also tried {ckpt_path})")
 
-    # Load checkpoint
+    
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
 
     id_to_idx = ckpt["id_to_idx"]
@@ -85,12 +75,12 @@ def main():
     num_writers = int(ckpt["num_writers"])
     hidden_dim = int(ckpt.get("hidden_dim", 128))
 
-    # Important: keep model config consistent with training
+    
     ode_method = ckpt.get("ode_method", "rk4")
     ode_step_size = float(ckpt.get("ode_step_size", 1.0))
     downsample = int(ckpt.get("downsample", 1))
 
-    # Load data split (dataset-agnostic filenames)
+    
     x_path, y_path = load_split_files(args.data_root, args.fold, args.split)
     X = load_pkl(x_path)
     y = load_pkl(y_path)
@@ -98,7 +88,7 @@ def main():
     n = len(X)
     idx = args.index % max(n, 1)
 
-    # Prepare sequence (repair empty, downsample, normalize)
+    
     seq = np.asarray(X[idx], dtype=np.float32)
     if seq.ndim != 2:
         raise ValueError(f"Sample {idx} has shape {seq.shape}, expected (T,F)")
@@ -112,10 +102,10 @@ def main():
 
     seq = (seq - mean) / std
 
-    # Device
+    
     device = args.device if (args.device.startswith("cuda") and torch.cuda.is_available()) else "cpu"
 
-    # Build + load model
+    
     model = ODERNNWriter(
         feat_dim=feat_dim,
         hidden_dim=hidden_dim,
@@ -126,13 +116,13 @@ def main():
     model.load_state_dict(ckpt["model_state"])
     model.eval()
 
-    # Batchify single sample
+    
     x = torch.from_numpy(seq).float()
     lengths = torch.tensor([x.shape[0]], dtype=torch.long)
     x = pad_sequence([x], batch_first=True).to(device)
     lengths = lengths.to(device)
 
-    # Predict
+    
     with torch.no_grad():
         logits = model(x, lengths)
         probs = torch.softmax(logits, dim=1)[0]

@@ -1,9 +1,4 @@
-# predict_single_writer_ode.py
-# Single-sample (single writer) prediction for ODE-RNN, same style as your BiLSTM script.
-# - ckpt is looked up inside model_saved/ by default
-# - loads correct split files for equations (_e.pkl) or words500 (no _e.pkl)
-# - uses ODE settings from checkpoint (ode_method, ode_step_size) + downsample from checkpoint
-# - repairs empty sequences
+
 
 import argparse
 import pickle
