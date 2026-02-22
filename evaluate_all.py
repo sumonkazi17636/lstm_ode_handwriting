@@ -257,7 +257,7 @@ def main():
         try:
             results.append(eval_checkpoint(ckpt_path, data_root_base, batch=args.batch, device=args.device))
         except Exception as e:
-            print(f"⚠️ Skipped {ckpt_path.name}: {e}")
+            print(f" Skipped {ckpt_path.name}: {e}")
 
     
     print("\n==================== EVALUATION SUMMARY ====================")
