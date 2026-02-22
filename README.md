@@ -1,10 +1,12 @@
 # lstm_ode_handwriting
 
 This repository contains training and evaluation scripts for writer identification from IMU-based handwriting sequences. It implements two model families:
+
 - BiLSTM-based classifier (in [main.py](lstm_ode_handwriting/main.py))
 - ODE-RNN (neural ODE + GRU) classifier (in [main_ode.py](lstm_ode_handwriting/main_ode.py) + [neural_ode_model.py](lstm_ode_handwriting/neural_ode_model.py))
 
 The code was used to train and evaluate models on OnHW datasets (words500 / equations) and stores checkpoints in `model_saved/`.
+
 ## Key files
 
 - [main.py](lstm_ode_handwriting/main.py) — BiLSTM training script (writer-dependent experiments)
@@ -21,13 +23,22 @@ The code was used to train and evaluate models on OnHW datasets (words500 / equa
 - torchdiffeq (for ODE-RNN): `pip install torchdiffeq`
 
 Suggested install (example):
+
+```bash
+python -m pip install numpy tqdm torchdiffeq
+# install torch according to your platform, e.g.:
+python -m pip install "torch" --index-url https://download.pytorch.org/whl/cpu
+```
+
 ## Dataset layout
 
 The training/eval scripts expect a dataset folder like `OnHW-equations_dep/0/` containing pickled files with names such as:
+
 - `all_x_dat_train_imu_e.pkl`, `train_ids_e.pkl`
 - `all_x_dat_val_imu_e.pkl`, `val_ids_e.pkl`
 
 There are two variants in the repo: equations (suffix `_e.pkl`) and words500 (no `_e`). Each fold is placed under `OnHW-*/<fold>/`.
+
 ## Quick usage
 
 Train BiLSTM (example):
@@ -40,6 +51,7 @@ Train ODE-RNN (example):
 
 ```bash
 python main_ode.py --data_root OnHW-equations_dep --fold 0 --epochs 10 --batch 32 --hidden 128 --downsample 5 --lr 3e-4
+
 ```
 
 Evaluate all checkpoints in `model_saved/` (prints a summary):
